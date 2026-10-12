@@ -180,8 +180,16 @@ window.__ModuleLoader__.load({
         message = "";
         emit();
         scope.mutate(ops)
-          .then(function () {
+          .then(function (ok) {
             saving = false;
+            // 0.1.7+ 的 ConfigForm.mutate() 返回 Promise<boolean> 且失败不 reject，
+            // 必须检查返回值，否则写入被拒仍会提示「已保存」。
+            if (ok === false) {
+              failed = true;
+              message = "保存失败：Host 未提供可写的设置命名空间（namespace 不可用或被拒）";
+              emit();
+              return;
+            }
             staged = {};
             message = "✅ 配置已保存（已同步到 ~/.gongwen-skill/dsh-config.json）";
             emit();
@@ -443,10 +451,19 @@ window.__ModuleLoader__.load({
     // settings.section 在设置侧边栏出现独立平级菜单）
     exports.apply = function (ctx) {
       var slots = ctx.get("slots");
-      var settingsScope = ctx.get("settingsScope");
-      if (!slots || !settingsScope) return;
+      if (!slots) return;
 
-      var scope = settingsScope.bind({ namespace: NS });
+      // 设置绑定器按代际形状探测（不做版本猜测）：
+      //   0.1.7+ 又更名为 configForms，按 loader 条目 id 取表单：configForms.get(entryId)
+      //   ≤0.1.6 为 settingsScope.bind({ namespace })
+      // 两者都提供 getSnapshot() / subscribe() / mutate()，故 controller 无需改动。
+      var configForms = ctx.get("configForms");
+      var settingsScope = ctx.get("settingsScope");
+      var scope = configForms
+        ? configForms.get(NS)
+        : (settingsScope ? settingsScope.bind({ namespace: NS }) : null);
+      if (!scope) return;   // 无设置提供方时静默降级，绝不阻塞激活
+
       var controller = makeCardController(scope);
 
       // 注册设置侧边栏平级菜单「文档样式配置」
@@ -468,7 +485,7 @@ window.__ModuleLoader__.load({
         return function () { controller.dispose(); };
       }, "gongwen-skill: client controller cleanup");
     };
-    exports.inject = ["slots", "settingsScope"];
+    exports.inject = ["slots"];
 
     return module.exports;
   },
